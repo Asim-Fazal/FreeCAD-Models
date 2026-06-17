@@ -1,0 +1,73 @@
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+
+# --- Overall shape ---
+height = 200.0        # total height in mm
+num_layers = 30       # stacked cross-sections (higher = smoother, slower)
+base_radius = 50.0    # nominal radius in mm
+twist_deg = 180.0     # total rotation from bottom to top
+
+# --- Hollowing ---
+wall_thickness = 3.0  # wall thickness in mm
+base_thickness = 8.0  # solid base at the bottom in mm
+
+# --- Surface design (spiral flutes) ---
+num_flutes = 8        # number of ridges running up the vase
+flute_depth = 0.12    # ridge depth as a fraction of the radius
+points_around = 72    # resolution around the circumference
+
+# Radius profile: u runs from 0 (bottom) to 1 (top)
+def radius_at(u):
+    return base_radius * (0.7 + 0.3 * math.sin(math.pi * u))
+
+# Build one fluted cross-section wire
+def make_section(z, base_r, twist, inset):
+    pts = []
+    for s in range(points_around + 1):
+        a = 2 * math.pi * s / points_around + twist
+        r = base_r * (1 + flute_depth * math.cos(num_flutes * a)) - inset
+        pts.append(App.Vector(r * math.cos(a), r * math.sin(a), z))
+    return Part.makePolygon(pts)
+
+# Reuse the same document so re-running just refreshes the vase in place
+doc_name = "TwistedVase"
+if doc_name in App.listDocuments():
+    doc = App.getDocument(doc_name)
+    for o in list(doc.Objects):
+        doc.removeObject(o.Name)
+else:
+    doc = App.newDocument(doc_name)
+App.setActiveDocument(doc.Name)
+
+# Outer surface (ruled=False -> smooth, no grid of squares)
+outer_wires = []
+for i in range(num_layers):
+    u = i / (num_layers - 1)
+    z = u * height
+    twist = math.radians(twist_deg) * u
+    outer_wires.append(make_section(z, radius_at(u), twist, 0.0))
+outer = Part.makeLoft(outer_wires, True, False)
+
+# Inner cavity: starts above the base, pokes past the top so the top opens
+inner_wires = []
+inner_bottom = base_thickness
+inner_top = height + 10.0
+for i in range(num_layers):
+    t = i / (num_layers - 1)
+    z = inner_bottom + t * (inner_top - inner_bottom)
+    u = min(z / height, 1.0)
+    twist = math.radians(twist_deg) * u
+    inner_wires.append(make_section(z, radius_at(u), twist, wall_thickness))
+inner = Part.makeLoft(inner_wires, True, False)
+
+# Hollow it out
+vase = outer.cut(inner)
+
+obj = doc.addObject("Part::Feature", "TwistedVase")
+obj.Shape = vase
+doc.recompute()
+
+Gui.activeDocument().activeView().viewIsometric()
+Gui.SendMsgToActiveView("ViewFit")
