@@ -1,0 +1,88 @@
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+import random
+
+C30 = math.cos(math.radians(30))
+
+def hexagon_face(rad):
+    pts = [App.Vector(rad*math.cos(math.radians(a)), 0, rad*math.sin(math.radians(a)))
+           for a in (90,150,210,270,330,30)]
+    pts.append(pts[0])
+    return Part.Face(Part.makePolygon(pts))
+
+def build_comb(W, top, bot, cell_radius, wall_thick, cell_depth, floor_thick, bulge, seed, origin):
+    rng = random.Random(seed)
+    s, wt = cell_radius, wall_thick
+    dx, dz = math.sqrt(3)*s, 1.5*s
+    H, z_mid = top - bot, (top + bot)/2.0
+    ox, oy, oz = origin
+
+    inner = s - wt/C30
+    outer_p = hexagon_face(s).extrude(App.Vector(0, cell_depth, 0))
+    inner_p = hexagon_face(inner).extrude(App.Vector(0, cell_depth + 1, 0))
+    inner_p.translate(App.Vector(0, floor_thick, 0))
+    unit = outer_p.cut(inner_p)
+
+    def half_width(v):
+        return W * math.sqrt(max(0.0, 1 - (1 - v)**2)) * (1 - 0.2*v)
+    def keep(cx, cz):
+        v = (cz - bot)/H
+        if v < 0 or v > 1: return False
+        m = half_width(v) - abs(cx)
+        if m > 0.7*dx: return True
+        if m > -0.5*dx: return rng.random() < (0.5 + m/(1.2*dx))
+        return False
+    def yb(cx, cz):
+        r2 = (cx/W)**2 + ((cz - z_mid)/(H*0.55))**2
+        return bulge*max(0.0, 1 - r2) + rng.uniform(-1.0, 1.0)
+
+    parts = []
+    nz = int(H/dz) + 2
+    nx = int(2*(W + dx)/dx) + 2
+    for iz in range(nz + 1):
+        cz = bot + iz*dz
+        xoff = dx/2 if iz % 2 else 0.0
+        for ix in range(nx + 1):
+            cx = -(W + dx) + ix*dx + xoff
+            if keep(cx, cz):
+                c = unit.copy()
+                c.translate(App.Vector(cx + ox, yb(cx, cz) + oy, cz + oz))
+                parts.append(c)
+    return Part.makeCompound(parts)
+
+# ---- three combs stacked front-to-back (same X/Z centre, different depth) ----
+combs = [
+    ("Comb_Main", (0.85, 0.65, 0.22), dict(W=150, top=150, bot=-90,
+        cell_radius=7.0, wall_thick=1.3, cell_depth=16, floor_thick=2.5,
+        bulge=22, seed=3,  origin=(0, -55, 0))),     # largest, at the back
+    ("Comb_Coarse", (0.66, 0.46, 0.16), dict(W=110, top=110, bot=-110,
+        cell_radius=9.0, wall_thick=1.8, cell_depth=20, floor_thick=3.0,
+        bulge=26, seed=42, origin=(0, -5, 30))),     # medium, in the middle
+    ("Comb_Small", (0.90, 0.74, 0.34), dict(W=80, top=110, bot=-70,
+        cell_radius=6.0, wall_thick=1.0, cell_depth=12, floor_thick=2.0,
+        bulge=14, seed=21, origin=(0, 55, 10))),     # smallest, in front
+]
+
+# ---------- document ----------
+doc_name = "Beehive"
+if doc_name in App.listDocuments():
+    doc = App.getDocument(doc_name)
+    for o in list(doc.Objects):
+        doc.removeObject(o.Name)
+else:
+    doc = App.newDocument(doc_name)
+App.setActiveDocument(doc.Name)
+
+for name, color, kw in combs:
+    obj = doc.addObject("Part::Feature", name)
+    obj.Shape = build_comb(**kw)
+    try:
+        obj.ViewObject.ShapeColor = color
+    except Exception:
+        pass
+
+doc.recompute()
+Gui.activeDocument().activeView().viewIsometric()
+Gui.SendMsgToActiveView("ViewFit")
