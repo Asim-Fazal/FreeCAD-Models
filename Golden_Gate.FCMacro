@@ -1,0 +1,101 @@
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+half_w = 45.0
+deck_len_half = 980.0
+tower_x = 640.0
+tower_base = -65.0
+tower_top = 230.0
+cable_mid = 20.0
+anchor_z = -5.0
+deck_top = 0.0
+cable_r = 3.0
+susp_r = 1.0
+susp_spacing = 22.0
+leg_x = 16.0
+leg_y = 16.0
+orange = (0.80, 0.25, 0.14)
+grey = (0.32, 0.33, 0.35)
+
+def rod(p1, p2, r):
+    d = p2 - p1
+    L = d.Length
+    if L < 1e-6:
+        return None
+    d.normalize()
+    return Part.makeCylinder(r, L, p1, d)
+
+def cable_z(x):
+    if abs(x) <= tower_x:
+        return cable_mid + (tower_top - cable_mid) * (x / tower_x) ** 2
+    frac = (abs(x) - tower_x) / (deck_len_half - tower_x)
+    return tower_top + (anchor_z - tower_top) * frac
+
+steel = []
+deck = []
+
+n = 80
+for sy in (-half_w, half_w):
+    pts = []
+    for i in range(n + 1):
+        x = -deck_len_half + (2 * deck_len_half) * i / n
+        pts.append(App.Vector(x, sy, cable_z(x)))
+    for i in range(len(pts) - 1):
+        c = rod(pts[i], pts[i + 1], cable_r)
+        if c:
+            steel.append(c)
+
+x = -deck_len_half
+while x <= deck_len_half + 1e-6:
+    z = cable_z(x)
+    if z > deck_top + 2:
+        for sy in (-half_w, half_w):
+            s = rod(App.Vector(x, sy, z), App.Vector(x, sy, deck_top), susp_r)
+            if s:
+                steel.append(s)
+    x += susp_spacing
+
+for tx in (-tower_x, tower_x):
+    for sy in (-half_w, half_w):
+        steel.append(Part.makeBox(leg_x, leg_y, tower_top - tower_base,
+                     App.Vector(tx - leg_x / 2, sy - leg_y / 2, tower_base)))
+    for zc in (tower_top - 4, 170, 95, 30):
+        steel.append(Part.makeBox(leg_x, 2 * half_w + leg_y, 14,
+                     App.Vector(tx - leg_x / 2, -half_w - leg_y / 2, zc - 7)))
+
+deck_w = 2 * half_w + 14
+deck.append(Part.makeBox(2 * deck_len_half, deck_w, 4,
+            App.Vector(-deck_len_half, -deck_w / 2, deck_top - 4)))
+for sy in (-half_w, half_w):
+    deck.append(Part.makeBox(2 * deck_len_half, 6, 12,
+                App.Vector(-deck_len_half, sy - 3, deck_top - 14)))
+xb = -deck_len_half
+while xb <= deck_len_half + 1e-6:
+    deck.append(Part.makeBox(8, deck_w, 6,
+                App.Vector(xb - 4, -deck_w / 2, deck_top - 12)))
+    xb += 40
+
+doc_name = "GoldenGate"
+if doc_name in App.listDocuments():
+    doc = App.getDocument(doc_name)
+    for o in list(doc.Objects):
+        doc.removeObject(o.Name)
+else:
+    doc = App.newDocument(doc_name)
+App.setActiveDocument(doc.Name)
+
+steel_obj = doc.addObject("Part::Feature", "Structure")
+steel_obj.Shape = Part.makeCompound(steel)
+deck_obj = doc.addObject("Part::Feature", "Deck")
+deck_obj.Shape = Part.makeCompound(deck)
+
+try:
+    steel_obj.ViewObject.ShapeColor = orange
+    deck_obj.ViewObject.ShapeColor = grey
+except Exception:
+    pass
+
+doc.recompute()
+Gui.activeDocument().activeView().viewIsometric()
+Gui.SendMsgToActiveView("ViewFit")
